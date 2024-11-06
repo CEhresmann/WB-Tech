@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: orders_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - ./DB/initial.sql:/docker-entrypoint-initdb.d/initial.sql
+    ports:
+      - "5432:5432"
+
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+      - "8222:8222" # для мониторинга
+
+  order_service:
+    build: ./service
+    depends_on:
+      - postgres
+      - nats
+    ports:
+      - "8080:8080"
