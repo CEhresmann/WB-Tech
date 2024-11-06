@@ -3,7 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	//"fmt"
 	"log"
 	"net/http"
 	"sync"
