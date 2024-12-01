@@ -1,88 +1,52 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
-	//"fmt"
 	"log"
 	"net/http"
 	"sync"
-
-	"github.com/nats-io/nats.go"
-	_ "github.com/lib/pq"
 )
 
-type Order struct {
-	ID        int             `json:"id"`
-	OrderData json.RawMessage `json:"order_data"`
-}
-
 var (
-	db      *sql.DB
-	cache   = make(map[int]Order)
+	cache   = make(map[string]Order)
 	cacheMu sync.RWMutex
 )
 
 func main() {
-	var err error
-	db, err = sql.Open("postgres", "user=user password=password dbname=orders_db sslmode=disable")
+	ctx := context.Background()
+
+	connString := "host=localhost port=5432 user=tim password=123987 dbname=WBdata sslmode=disable"
+	pg, err := NewPG(ctx, connString)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
-	defer db.Close()
+	defer pg.Close()
 
-	// Восстановление кэша из БД
-	restoreCache()
-
-	// Подключение к NATS
-	natsConn, err := nats.Connect(nats.DefaultURL)
-	if err != nil {
-		log.Fatal(err)
+	if err := pg.CreateTables(ctx); err != nil {
+		log.Fatalf("Failed to create tables: %v", err)
 	}
-	defer natsConn.Close()
 
-	natsConn.Subscribe("orders", func(m *nats.Msg) {
-		var order Order
-		if err := json.Unmarshal(m.Data, &order); err != nil {
-			log.Printf("Ошибка при распарсивании сообщения: %v", err)
-			return
-		}
-		saveOrderToDB(order)
-		cacheMu.Lock()
-		cache[order.ID] = order
-		cacheMu.Unlock()
-	})
+	go start()
 
-	http.HandleFunc("/order/", orderHandler)
-	log.Println("Сервер запущен на порту 8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	http.HandleFunc("/order/", orderhandle)
+	log.Println(http.ListenAndServe(":8080", nil))
 }
 
-func orderHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[len("/order/"):]
+func orderhandle(w http.ResponseWriter, r *http.Request) {
+	orderID := r.URL.Path[len("/order/"):]
 
 	cacheMu.RLock()
-	order, found := cache[id]
+	order, ok := cache[orderID]
 	cacheMu.RUnlock()
 
-	if !found {
-		http.Error(w, "Order not found", http.StatusNotFound)
+	if !ok {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(order)
-}
-
-func saveOrderToDB(order Order) {
-	_, err := db.Exec("INSERT INTO orders (order_data) VALUES ($1)", order.OrderData)
-	if err != nil {
-		log.Printf("Ошибка при сохранении заказа в БД: %v", err)
+	if err := json.NewEncoder(w).Encode(order); err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 }
-
-func restoreCache() {
-	rows, err := db.Query("SELECT id, order_data FROM orders")
-	if err != nil {
-		log.Printf("Ошибка при восстановлении кэша: %v", err)
-		return
