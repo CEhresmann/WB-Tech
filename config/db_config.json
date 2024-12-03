@@ -1,0 +1,7 @@
+{
+  "host": "localhost",
+  "port": 5432,
+  "user": "tim",
+  "password": "123987",
+  "dbname": "WBdata"
+}
