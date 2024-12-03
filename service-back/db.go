@@ -6,56 +6,73 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
-type postgres struct {
+type Postgres struct {
 	db     *pgxpool.Pool
 	logger *zap.Logger
 }
 
 var (
-	pgInstance *postgres
+	PgInstance *Postgres
 	pgOnce     sync.Once
 )
 
-// NewPG initializes a new PostgreSQL connection pool and returns a postgres instance.
-func NewPG(ctx context.Context, connString string, logger *zap.Logger) (*postgres, error) {
+func NewPG(ctx context.Context, connString string, logger *zap.Logger) (*Postgres, error) {
 	pgOnce.Do(func() {
 		db, err := pgxpool.New(ctx, connString)
 		if err != nil {
 			logger.Fatal("unable to create connection pool", zap.Error(err))
 		}
-		pgInstance = &postgres{db: db, logger: logger}
+		PgInstance = &Postgres{db: db, logger: logger}
 	})
 
-	return pgInstance, nil
+	return PgInstance, nil
 }
 
-// Ping checks the connection to the database.
-func (pg *postgres) Ping(ctx context.Context) error {
+func (pg *Postgres) Ping(ctx context.Context) error {
 	return pg.db.Ping(ctx)
 }
 
-// Close closes the database connection pool.
-func (pg *postgres) Close() {
+func (pg *Postgres) Close() {
 	pg.db.Close()
 	pg.logger.Info("database connection closed")
 }
 
-// CreateTables creates tables in the database based on the provided SQL script.
-func (pg *postgres) CreateTables(ctx context.Context) error {
-	sqlScript, err := os.ReadFile("../DB/initial.sql")
+func (pg *Postgres) CreateTables(ctx context.Context) error {
+	sqlScript, err := os.ReadFile("DB/initial.sql")
 	if err != nil {
 		return fmt.Errorf("failed to read SQL script: %w", err)
 	}
 
-	_, err = pg.db.Exec(ctx, string(sqlScript))
+	tx, err := pg.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to execute SQL script: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	statements := strings.Split(string(sqlScript), ";")
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+
+		_, err = tx.Exec(ctx, stmt)
+		if err != nil {
+			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+				return fmt.Errorf("failed to rollback transaction: %w", rollbackErr)
+			}
+			return fmt.Errorf("failed to execute SQL statement: %s, error: %w", stmt, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	pg.logger.Info("Tables created or already exist")
@@ -88,15 +105,12 @@ func LoadCacheFromDB(dbConfig string, ctx context.Context) error {
 	return nil
 }
 
-// connectToDB establishes a connection to the PostgreSQL database using the provided connection string.
 func connectToDB(dbConfig string) (*pgxpool.Pool, error) {
-	// Create a connection pool
 	pool, err := pgxpool.New(context.Background(), dbConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
 
-	// Verify the connection by executing a simple query
 	if err := pool.Ping(context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -105,12 +119,10 @@ func connectToDB(dbConfig string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Config holds the database configuration
 type Config struct {
 	DBConfig string `json:"DB_CONFIG"`
 }
 
-// LoadConfig reads the configuration from a JSON file
 func LoadConfig(filePath string) (*Config, error) {
 	file, err := os.Open(filePath)
 	if err != nil {

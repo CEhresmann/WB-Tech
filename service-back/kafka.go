@@ -9,7 +9,7 @@ import (
 
 func Start(logger *zap.Logger) {
 	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{"localhost:9092"},
+		Brokers: []string{"kafka:9092"},
 		Topic:   "orders",
 		GroupID: "order-consumer-group", // Fixed the group ID format
 	})
@@ -18,13 +18,13 @@ func Start(logger *zap.Logger) {
 		m, err := r.ReadMessage(context.Background())
 		if err != nil {
 			logger.Error("error reading message", zap.Error(err))
-			continue // Skip to the next iteration on error
+			continue
 		}
 
 		var order Order
 		if err := json.Unmarshal(m.Value, &order); err != nil {
 			logger.Error("error unmarshaling message", zap.Error(err))
-			continue // Skip to the next iteration on error
+			continue
 		}
 
 		cacheMu.Lock()
@@ -54,7 +54,7 @@ func ProduceOrder(order Order, logger *zap.Logger) error {
 	}
 
 	msg := kafka.Message{
-		Key:   []byte(order.OrderUID), // You can use a unique key for partitioning
+		Key:   []byte(order.OrderUID),
 		Value: orderData,
 	}
 

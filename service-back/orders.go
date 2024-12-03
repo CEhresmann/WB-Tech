@@ -8,7 +8,7 @@ import (
 
 func SaveOrder(order Order) (err error) {
 	ctx := context.Background()
-	pg := pgInstance
+	pg := PgInstance
 
 	// Start a transaction
 	tx, err := pg.db.Begin(ctx)

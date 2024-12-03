@@ -1,3 +1,0 @@
-{
-  "DB_CONFIG": "postgres://tim:123987@localhost:5432/wbdata?sslmode=disable"
-}
